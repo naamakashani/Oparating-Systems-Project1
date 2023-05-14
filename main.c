@@ -64,6 +64,54 @@ char *dequeue(queue_t *queue) {
     return data;
 }
 
+struct UBQ {
+    pthread_mutex_t mutex;
+    sem_t full;
+    queue_t my_queue;
+    char type;
+    int done;
+
+    char *(*pop_un)(struct UBQ *this);
+
+    void (*init_un)(struct UBQ *this, char type);
+
+    void (*push_un)(char *new, struct UBQ *this);
+
+
+};
+
+
+void init_un(struct UBQ *this, char type) {
+    this->type = type;
+    sem_init(&this->full, 0, 0);
+    int result = pthread_mutex_init(&(this->mutex), NULL);
+    if (result != 0) {
+        printf("Failed to initialize mutex\n");
+        exit(-1);
+    }
+    init_queue(&this->my_queue);
+    this->done = 1;
+}
+
+void push_un(char *new, struct UBQ *this) {
+
+    pthread_mutex_lock(&this->mutex);
+    enqueue(&this->my_queue, new);
+    pthread_mutex_unlock(&this->mutex);
+    sem_post(&this->full);
+
+}
+
+char *pop_un(struct UBQ *this) {
+    sem_wait(&this->full);
+    pthread_mutex_lock(&this->mutex);
+    char *data = dequeue(&this->my_queue);
+    pthread_mutex_unlock(&this->mutex);
+    return data;
+
+
+}
+
 struct BQ {
     pthread_mutex_t mutex;
     sem_t empty, full;
@@ -115,8 +163,8 @@ char *pop(struct BQ *this) {
 }
 
 struct BQ *array;
-
-
+struct UBQ dispatcher_queues[3];
+struct BQ co_editor_array;
 struct ProducerArgs {
     int num;
     int queue_size;
@@ -139,6 +187,7 @@ void *producer(void *arg) {
     int counter = 0;
     int counter_sports = 0, counter_news = 0, counter_whether = 0;
     while (counter < num_producers) {
+        sleep(2);
         // Generate a random number to select a data type
         int randNum = rand() % 3;
         const char *dataType = dataTypes[randNum];
@@ -168,6 +217,8 @@ void *producer(void *arg) {
 
         }
         strcat(data, num);
+        strcat(data, "\n");
+        //write(1,data,strlen(data));
         push(data, &array[producer_num - 1]);
         counter++;
     }
@@ -177,9 +228,15 @@ void *producer(void *arg) {
 
 }
 
-void *consumer(void *arg) {
+void *dispatcher(void *arg) {
     int num = *((int *) arg);
     int flag = 1;
+    dispatcher_queues[0].init_un = &init_un;
+    dispatcher_queues[0].init_un(&dispatcher_queues[0], 'S');
+    dispatcher_queues[1].init_un = &init_un;
+    dispatcher_queues[1].init_un(&dispatcher_queues[1], 'N');
+    dispatcher_queues[2].init_un = &init_un;
+    dispatcher_queues[2].init_un(&dispatcher_queues[2], 'W');
     while (flag == 1) {
         flag = 0;
         for (int i = 0; i < num; i++) {
@@ -188,14 +245,60 @@ void *consumer(void *arg) {
             }
             flag = 1;
             char *data = pop(&array[i]);
-            
-            if (strcmp(data, "DONE")) {
+
+            if (strcmp(data, "DONE") == 0) {
                 array[i].done = 0;
+            } else {
+                if (strstr(data, "NEWS")) {
+                    push_un(data, &dispatcher_queues[1]);
+                }
+                if (strstr(data, "WEATHER")) {
+                    push_un(data, &dispatcher_queues[2]);
+
+                }
+                if (strstr(data, "SPORTS")) {
+                    push_un(data, &dispatcher_queues[0]);
+                }
             }
 
         }
+    }
+    for (int i = 0; i < 3; i++) {
+        push_un("DONE", &dispatcher_queues[i]);
+    }
+    pthread_exit(NULL);
+
+
+}
+
+void *coEditor(void *arg) {
+    int num = *((int *) arg);
+    while (1) {
+        char *data = pop_un(&dispatcher_queues[num]);
+        if (strcmp(data, "DONE") != 0) {
+            push(data, &co_editor_array);
+        }
+        else {
+            push(data, &co_editor_array);
+            break;
+        }
+    }
+    pthread_exit(NULL);
+
+}
+
+void *screenManager(void *arg) {
+    int counter = 0;
+    while (counter < 3) {
+        char *data = pop(&co_editor_array);
+        if (strcmp(data, "DONE") != 0) {
+            write(1, data, strlen(data));
+        } else
+            counter++;
 
     }
+    pthread_exit(NULL);
+
 }
 
 int number_of_producers(char *file, int *option) {
@@ -279,11 +382,19 @@ int main(int argc, char *argv[]) {
     struct ProducerArgs args[num_producers];
     extract_conf(args, argv[1], num_producers, co_editor_size, *ptr_option);
     array = (struct BQ *) malloc(sizeof(struct BQ) * num_producers);
-    producer(&args[0]);
+    co_editor_array.init = &init;
+    co_editor_array.init(&co_editor_array, *co_editor_size);
     pthread_t threads[num_producers];
     for (int i = 0; i < num_producers; i++) {
         pthread_create(&threads[i], NULL, producer, &args[i]);
     }
+    int index0 = 0, index1 = 1, index2 = 2;
+    pthread_t dispatch, coedit1, coedit2, coedit3, screen_manager;
 
-
+    pthread_create(&dispatch, NULL, dispatcher, &num_producers);
+    pthread_create(&coedit1, NULL, coEditor, &index0);
+    pthread_create(&coedit2, NULL, coEditor, &index1);
+    pthread_create(&coedit3, NULL, coEditor, &index2);
+    pthread_create(&screen_manager, NULL, screenManager, NULL);
+    pthread_join(screen_manager, NULL);
 }
