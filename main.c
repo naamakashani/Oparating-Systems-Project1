@@ -1,21 +1,13 @@
+//Naama Kashani 312400476
+
 #include <stdio.h>
 #include <string.h>
-#include <stdio.h>
 #include <pthread.h>
 #include <semaphore.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <string.h>
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-# define N 10
-
-
+//create the queue
 typedef struct queue_node {
     char *data;
     struct queue_node *next;
@@ -64,6 +56,7 @@ char *dequeue(queue_t *queue) {
     return data;
 }
 
+//create the unbounded queue
 struct UBQ {
     pthread_mutex_t mutex;
     sem_t full;
@@ -112,6 +105,7 @@ char *pop_un(struct UBQ *this) {
 
 }
 
+//create the bounded queue
 struct BQ {
     pthread_mutex_t mutex;
     sem_t empty, full;
@@ -162,15 +156,19 @@ char *pop(struct BQ *this) {
 
 }
 
-struct BQ *array;
+//define the global variables
+struct BQ *producersBQ;
 struct UBQ dispatcher_queues[3];
 struct BQ co_editor_array;
+
+//define the arguments for the producer
 struct ProducerArgs {
     int num;
     int queue_size;
     int num_producers;
 };
 
+//
 void *producer(void *arg) {
 
     // Seed the random number generator
@@ -179,11 +177,12 @@ void *producer(void *arg) {
     // Define the data types
     const char *dataTypes[] = {"SPORTS", "NEWS", "WEATHER"};
     struct ProducerArgs *args = (struct ProducerArgs *) arg;
+    // Initialize the queue
     int producer_num = args->num;
     int queue_size = args->queue_size;
     int num_producers = args->num_producers;
-    array[producer_num].init = &init;
-    array[producer_num].init(&array[producer_num - 1], queue_size);
+    producersBQ[producer_num].init = &init;
+    producersBQ[producer_num].init(&producersBQ[producer_num - 1], queue_size);
     int counter = 0;
     int counter_sports = 0, counter_news = 0, counter_whether = 0;
     while (counter < num_producers) {
@@ -200,6 +199,7 @@ void *producer(void *arg) {
         strcat(data, dataType);
         strcat(data, " ");
         char num[16];
+        // Generate a random number to select a data type
         switch (randNum) {
             case 0:
                 sprintf(num, "%d", counter_sports);
@@ -219,11 +219,11 @@ void *producer(void *arg) {
         strcat(data, num);
         strcat(data, "\n");
         //write(1,data,strlen(data));
-        push(data, &array[producer_num - 1]);
+        push(data, &producersBQ[producer_num - 1]);
         counter++;
     }
 
-    push("DONE", &array[producer_num - 1]);
+    push("DONE", &producersBQ[producer_num - 1]);
     pthread_exit(NULL);
 
 }
@@ -231,6 +231,7 @@ void *producer(void *arg) {
 void *dispatcher(void *arg) {
     int num = *((int *) arg);
     int flag = 1;
+    //initialize the dispatcher queues
     dispatcher_queues[0].init_un = &init_un;
     dispatcher_queues[0].init_un(&dispatcher_queues[0], 'S');
     dispatcher_queues[1].init_un = &init_un;
@@ -240,15 +241,18 @@ void *dispatcher(void *arg) {
     while (flag == 1) {
         flag = 0;
         for (int i = 0; i < num; i++) {
-            if (array[i].done == 0) {
+            //if the producer is not done, continue. if all loop continue flag will be 0 and break.
+            if (producersBQ[i].done == 0) {
                 continue;
             }
             flag = 1;
-            char *data = pop(&array[i]);
+
+            char *data = pop(&producersBQ[i]);
 
             if (strcmp(data, "DONE") == 0) {
-                array[i].done = 0;
+                producersBQ[i].done = 0;
             } else {
+                //push the data to the dispatcher correct queue
                 if (strstr(data, "NEWS")) {
                     push_un(data, &dispatcher_queues[1]);
                 }
@@ -263,6 +267,7 @@ void *dispatcher(void *arg) {
 
         }
     }
+    //after all the producers are done, push "DONE" to the dispatcher queues
     for (int i = 0; i < 3; i++) {
         push_un("DONE", &dispatcher_queues[i]);
     }
@@ -274,11 +279,13 @@ void *dispatcher(void *arg) {
 void *coEditor(void *arg) {
     int num = *((int *) arg);
     while (1) {
+        //pop drom the dispatcher queues and push to the co-editor array
         char *data = pop_un(&dispatcher_queues[num]);
         if (strcmp(data, "DONE") != 0) {
+            usleep(100000); // sleep for 0.1 seconds (100,000 microseconds)
             push(data, &co_editor_array);
-        }
-        else {
+        } else {
+            //if the dispatcher queue is done, push "DONE" to the co-editor array and exit
             push(data, &co_editor_array);
             break;
         }
@@ -289,23 +296,29 @@ void *coEditor(void *arg) {
 
 void *screenManager(void *arg) {
     int counter = 0;
+    //pop from the co-editor array and write to the screen
     while (counter < 3) {
         char *data = pop(&co_editor_array);
+        //if the co-editor array is not done, write.if the counter is 3 break.
         if (strcmp(data, "DONE") != 0) {
             write(1, data, strlen(data));
         } else
             counter++;
 
     }
+    write(1, "DONE", strlen("DONE"));
     pthread_exit(NULL);
 
 }
 
+//count number of producers in the given file
 int number_of_producers(char *file, int *option) {
     int num_producers = 0;
     char line[256];
+    //option is the format of the config.txt
     *option = 1;
     FILE *file1 = fopen(file, "r");
+    //count number os "PRODUCER" in the file
     while (fgets(line, sizeof(line), file1)) {
         if (strncmp(line, "PRODUCER", strlen("PRODUCER")) == 0) {
             num_producers++;
@@ -330,10 +343,11 @@ int number_of_producers(char *file, int *option) {
 
 }
 
-void extract_conf(struct ProducerArgs *args, char *file, int num_producers, int *co_editor_size, int option) {
+void extract_conf(struct ProducerArgs *args, char *file, int *co_editor_size, int option) {
     char line[256];
     int i = 0;
     FILE *fd = fopen(file, "r");
+    //if the format is 1, extract the data from the config.txt file
     if (option == 1) {
         while (fgets(line, sizeof(line), fd) > 0) {
             if (strncmp(line, "PRODUCER", strlen("PRODUCER")) == 0) {
@@ -351,6 +365,7 @@ void extract_conf(struct ProducerArgs *args, char *file, int num_producers, int 
             }
         }
     } else {
+        //if the format is 2, extract the data from the config.txt file
         while (fgets(line, sizeof(line), fd) > 0) {
             sscanf(line, "%d", &args[i].num);
             fgets(line, sizeof(line), fd);
@@ -380,21 +395,27 @@ int main(int argc, char *argv[]) {
     int *ptr_option = &option;
     int num_producers = number_of_producers(argv[1], ptr_option);
     struct ProducerArgs args[num_producers];
-    extract_conf(args, argv[1], num_producers, co_editor_size, *ptr_option);
-    array = (struct BQ *) malloc(sizeof(struct BQ) * num_producers);
+    extract_conf(args, argv[1], co_editor_size, *ptr_option);
+    //initialize the size of producer BQ
+    producersBQ = (struct BQ *) malloc(sizeof(struct BQ) * num_producers);
     co_editor_array.init = &init;
     co_editor_array.init(&co_editor_array, *co_editor_size);
     pthread_t threads[num_producers];
+
+    //initialize the producer threads
     for (int i = 0; i < num_producers; i++) {
         pthread_create(&threads[i], NULL, producer, &args[i]);
     }
     int index0 = 0, index1 = 1, index2 = 2;
     pthread_t dispatch, coedit1, coedit2, coedit3, screen_manager;
-
+    //create dispatcher, co-editor and screnn manager threads
     pthread_create(&dispatch, NULL, dispatcher, &num_producers);
     pthread_create(&coedit1, NULL, coEditor, &index0);
     pthread_create(&coedit2, NULL, coEditor, &index1);
     pthread_create(&coedit3, NULL, coEditor, &index2);
     pthread_create(&screen_manager, NULL, screenManager, NULL);
+
+    //wait for all the threads to finish and wait for the last thread is the same
     pthread_join(screen_manager, NULL);
+    free(producersBQ);
 }
