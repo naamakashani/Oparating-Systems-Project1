@@ -75,23 +75,23 @@ struct UBQ {
 
 
 void init_un(struct UBQ *this, char type) {
-    this->type = type;
-    sem_init(&this->full, 0, 0);
-    int result = pthread_mutex_init(&(this->mutex), NULL);
-    if (result != 0) {
-        printf("Failed to initialize mutex\n");
-        exit(-1);
-    }
-    init_queue(&this->my_queue);
-    this->done = 1;
+this->type = type;
+sem_init(&this->full, 0, 0);
+int result = pthread_mutex_init(&(this->mutex), NULL);
+if (result != 0) {
+printf("Failed to initialize mutex\n");
+exit(-1);
+}
+init_queue(&this->my_queue);
+this->done = 1;
 }
 
 void push_un(char *new, struct UBQ *this) {
 
-    pthread_mutex_lock(&this->mutex);
-    enqueue(&this->my_queue, new);
-    pthread_mutex_unlock(&this->mutex);
-    sem_post(&this->full);
+pthread_mutex_lock(&this->mutex);
+enqueue(&this->my_queue, new);
+pthread_mutex_unlock(&this->mutex);
+sem_post(&this->full);
 
 }
 
@@ -124,24 +124,24 @@ struct BQ {
 
 
 void init(struct BQ *this, int size) {
-    this->size = size;
-    sem_init(&this->empty, 0, this->size);
-    sem_init(&this->full, 0, 0);
-    int result = pthread_mutex_init(&(this->mutex), NULL);
-    if (result != 0) {
-        printf("Failed to initialize mutex\n");
-        exit(-1);
-    }
-    init_queue(&this->my_queue);
-    this->done = 1;
+this->size = size;
+sem_init(&this->empty, 0, this->size);
+sem_init(&this->full, 0, 0);
+int result = pthread_mutex_init(&(this->mutex), NULL);
+if (result != 0) {
+printf("Failed to initialize mutex\n");
+exit(-1);
+}
+init_queue(&this->my_queue);
+this->done = 1;
 }
 
 void push(char *new, struct BQ *this) {
-    sem_wait(&this->empty);
-    pthread_mutex_lock(&this->mutex);
-    enqueue(&this->my_queue, new);
-    pthread_mutex_unlock(&this->mutex);
-    sem_post(&this->full);
+sem_wait(&this->empty);
+pthread_mutex_lock(&this->mutex);
+enqueue(&this->my_queue, new);
+pthread_mutex_unlock(&this->mutex);
+sem_post(&this->full);
 
 }
 
@@ -186,7 +186,6 @@ void *producer(void *arg) {
     int counter = 0;
     int counter_sports = 0, counter_news = 0, counter_whether = 0;
     while (counter < num_producers) {
-        sleep(2);
         // Generate a random number to select a data type
         int randNum = rand() % 3;
         const char *dataType = dataTypes[randNum];
