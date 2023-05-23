@@ -1,366 +1,429 @@
-// Noga Ben Ari 208304220
+//Naama Kashani 312400476
+
+#include <stdio.h>
 #include <string.h>
 #include <pthread.h>
 #include <semaphore.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
+//create the queue
+typedef struct queue_node {
+    char *data;
+    struct queue_node *next;
+} queue_node_t;
 
+typedef struct queue {
+    queue_node_t *head;
+    queue_node_t *tail;
+} queue_t;
 
-
-//the bounded queue
-typedef struct {
-    char **buffer;
-    int size;
-    int start;
-    int end;
-    sem_t full;//number of full members in the queue
-    sem_t empty; //number of empty members in the queue
-    pthread_mutex_t mutex; //used to synchronize access to the shared deque object.
-} BoundedQueue;
-
-// constructor
-BoundedQueue *create_bounded_queue(int capacity) {
-    BoundedQueue *queue = malloc(sizeof(BoundedQueue));
-    queue->buffer = malloc(sizeof(char *) * capacity);
-    queue->size = capacity;
-    queue->start = 0;
-    queue->end = 0;
-    //initiation of the semaphores
-    sem_init(&queue->full, 0, 0);
-    sem_init(&queue->empty, 0, capacity);
-    pthread_mutex_init(&queue->mutex, NULL);
-    return queue;
+void init_queue(queue_t *queue) {
+    queue->head = NULL;
+    queue->tail = NULL;
 }
 
-//destructor
-void destroy_bounded_queue(BoundedQueue *queue) {
-    free(queue->buffer);
-    sem_destroy(&queue->full);
-    sem_destroy(&queue->empty);
-    pthread_mutex_destroy(&queue->mutex);
-    free(queue);
-}
+void enqueue(queue_t *queue, char *data) {
+    queue_node_t *new_node = (queue_node_t *) malloc(sizeof(queue_node_t));
+    new_node->data = (char *) malloc(strlen(data) + 1);
+    strcpy(new_node->data, data);
+    new_node->next = NULL;
 
-//inserts a new object
-void push_to_bounded_queue(BoundedQueue *queue, char *element) {
-    //waits for empty members to push to them the item - means non-zero value
-    sem_wait(&queue->empty);
-//lock before pushing a new element
-    pthread_mutex_lock(&queue->mutex);
-    queue->buffer[queue->end] = element;
-    queue->end = (queue->end + 1) % queue->size;
-    //after inserting the element - release the lock
-    pthread_mutex_unlock(&queue->mutex);
-//    increase the value of the full members
-    sem_post(&queue->full);
-}
-
-//removes the first object from the bounded buffer and return it to the user
-char *pop_from_bounded_queue(BoundedQueue *queue) {
-    sem_wait(&queue->full);
-    pthread_mutex_lock(&queue->mutex);
-    //lock before pop a element
-
-    char *element = queue->buffer[queue->start];
-    queue->start = (queue->start + 1) % queue->size;
-    //release the lock
-    pthread_mutex_unlock(&queue->mutex);
-//    increase the value of the empty members
-    sem_post(&queue->empty);
-    return element;
-}
-
-
-//the unbounded queue
-typedef struct {
-    char **buffer;
-    int size;
-    int start;
-    sem_t full;//number of full members in the queue
-    pthread_mutex_t mutex; // used to synchronize access to the shared deque object
-} UnboundedQueue;
-
-// constructor
-UnboundedQueue *create_unbounded_queue() {
-    UnboundedQueue *queue = malloc(sizeof(UnboundedQueue));
-    queue->buffer = malloc(sizeof(char *));
-    queue->size = 1;
-    queue->start = 0;
-    sem_init(&queue->full, 0, 0);
-    pthread_mutex_init(&queue->mutex, NULL);
-    return queue;
-}
-
-//destructor
-void destroy_unbounded_queue(UnboundedQueue *queue) {
-    free(queue->buffer);
-    sem_destroy(&queue->full);
-    pthread_mutex_destroy(&queue->mutex);
-    free(queue);
-}
-
-// inserts a new object
-void push_to_unbounded_queue(UnboundedQueue *queue, char *element) {
-    pthread_mutex_lock(&queue->mutex);
-    queue->buffer = realloc(queue->buffer, sizeof(char *) * (queue->size + 1));
-    queue->buffer[queue->size - 1] = element;
-    queue->size++;
-    pthread_mutex_unlock(&queue->mutex);
-    sem_post(&queue->full);
-}
-
-// removes the first object from the unbounded buffer and return it to the user
-char *pop_from_unbounded_queue(UnboundedQueue *queue) {
-    sem_wait(&queue->full);
-    pthread_mutex_lock(&queue->mutex);
-    char *element = queue->buffer[queue->start];
-    queue->start++;
-    pthread_mutex_unlock(&queue->mutex);
-    return element;
-}
-
-
-// Global variables
-char *news[] = {"SPORTS", "NEWS", "WEATHER"};
-BoundedQueue **producersQueues;
-UnboundedQueue **dispatcherQueues;
-BoundedQueue *sharedQueue;
-pthread_t *producers;
-pthread_t *coEditors;
-pthread_t dispatcherThread;
-pthread_t screenManagerThread;
-int numOfProducers = 0;
-
-
-typedef struct {
-    int id;
-    int numberOfProducts;
-} producer_parms;
-
-//producer
-void *producer(void *args) {
-    //args is of type producer_parms
-    producer_parms *parms = args;
-    int id = parms->id;
-    int numberOfProducts = parms->numberOfProducts;
-    int amount[3] = {0,0,0};
-    for (int i = 0; i < numberOfProducts; i++) {
-        int newsId = rand() % 3;
-        const char* format = "Producer %d %s %d";
-        int length = snprintf(NULL, 0, format, id , news[newsId], amount[newsId]);
-        // Create a dynamic buffer with the calculated length
-        char* str = (char*)malloc(length + 1);
-
-        // Use snprintf with the dynamic buffer
-        snprintf(str, length + 1, format, id , news[newsId], amount[newsId]);
-        push_to_bounded_queue(producersQueues[id - 1], str);
-//        printf("push:  to producer %d - %s \n", id, str); //test
-        amount[newsId]++;
-
+    if (queue->head == NULL) {
+        queue->head = new_node;
+        queue->tail = new_node;
+    } else {
+        queue->tail->next = new_node;
+        queue->tail = new_node;
     }
-    // done with all the news
-    push_to_bounded_queue(producersQueues[id-1], "DONE");
-//    printf("push:  to producer %d - DONE\n", id); //test
-    free(parms);
-
-
-    return NULL;
 }
 
-typedef struct {
-    int id;
-} coEditor_id;
-
-
-void *co_editor(void *args) {
-    coEditor_id *coEditorId = args;
-    int id = coEditorId->id;
-    //get the value from the dispatcherQueues
-    char *str = pop_from_unbounded_queue(dispatcherQueues[id]);
-//    printf("pop: from dispatcher %d - %s\n", id, str); //test
-    //runs until the popped string is equal to the string "DONE"
-    while (strcmp(str, "DONE") != 0) {
-        // Sleep for 100ms
-        usleep(100000);
-
-        push_to_bounded_queue(sharedQueue, str);
-//        printf("push: to shared %s\n", str); //test
-        str = pop_from_unbounded_queue(dispatcherQueues[id]);
-//        printf("pop: from dispatcher %d - %s\n", id, str); //test
+char *dequeue(queue_t *queue) {
+    if (queue->head == NULL) {
+        printf("Queue is empty\n");
+        return NULL;
     }
-    destroy_unbounded_queue(dispatcherQueues[id]);
-    dispatcherQueues[id]=NULL;
-    push_to_bounded_queue(sharedQueue, "DONE");
-//    printf("push: to shared - DONE\n"); //test
-    free(coEditorId);
-    return NULL;
+
+    char *data = queue->head->data;
+    queue_node_t *temp = queue->head;
+    queue->head = queue->head->next;
+    //free(temp);
+
+    if (queue->head == NULL) {
+        queue->tail = NULL;
+    }
+
+    return data;
 }
 
+//create the unbounded queue
+struct UBQ {
+    pthread_mutex_t mutex;
+    sem_t full;
+    queue_t my_queue;
+    char type;
+    int done;
 
-//dispacher
-void *dispacher() {
-    unsigned long long queues = numOfProducers;
-    unsigned long long currentQueue = 0;
-    while (queues != 0) {
-        currentQueue = (currentQueue + 1) % numOfProducers;
-        if (producersQueues[currentQueue] == NULL) {
-            continue;
-        }
-        char *str = pop_from_bounded_queue(producersQueues[currentQueue]);
-//        printf("pop:  from producer %llu - %s\n", currentQueue+1, str); //test
-        if (strcmp(str, "DONE") == 0) {
-            queues--;
-            destroy_bounded_queue(producersQueues[currentQueue]);
-            producersQueues[currentQueue] = NULL;
-            continue;
-        }
-        for (int i = 0; i < 3; i++) {
-            if (strstr(str, news[i]) != NULL) {
-                push_to_unbounded_queue(dispatcherQueues[i], str);
-//                printf("push: to dispatcher %d - %s\n", i, str); //test
-                break;
-            }
-        }
-        currentQueue++;
-    }
-    for (size_t i = 0; i < 3; i++) {
-        push_to_unbounded_queue(dispatcherQueues[i], "DONE");
-//        printf("push: to dispatcher %zu - DONE\n", i); //test
-    }
-    return NULL;
+    char *(*pop_un)(struct UBQ *this);
 
-}
+    void (*init_un)(struct UBQ *this, char type);
+
+    void (*push_un)(char *new, struct UBQ *this);
 
 
-// waits for elements to be available in the shared queue and prints them to the console.
-void *screenManager() {
-    //counts the "DONE"
-    int dones = 0;
-    while (dones < 3) {
-        // get an element from the shared queue.
-        char *str = pop_from_bounded_queue(sharedQueue);
-//        printf("pop: from shared- %s\n", str); //test
-        if (strcmp(str, "DONE") == 0) {
-            dones++;
-        } else {
-            printf("%s\n", str);
-        }
-    }
-    destroy_bounded_queue(sharedQueue);
-    sharedQueue = NULL;
-    //when it has received as many messages as the total size of the "news" array
-    printf("DONE\n");
-    return NULL;
-}
+};
 
 
-//reads the configuration file and inits the globals variables and threads
-void init(char *config_file) {
-    int num1, num2, num3;
-    //read the configuration file
-    FILE *config_f = fopen(config_file, "r");
-    //if the open operation was failed
-    if (config_f == NULL) {
-        printf("Error opening config file\n");
+void init_un(struct UBQ *this, char type) {
+    this->type = type;
+    sem_init(&this->full, 0, 0);
+    int result = pthread_mutex_init(&(this->mutex), NULL);
+    if (result != 0) {
+        printf("Failed to initialize mutex\n");
         exit(-1);
     }
-    //counts the number of producers in the configuration file
-    while (fscanf(config_f, "%d", &num1) == 1) {
-        if (fscanf(config_f, "%d", &num2) == 1 && fscanf(config_f, "%d", &num3) == 1) {
-            numOfProducers++;
-        }
-    }
-    fseek(config_f,0,SEEK_SET);
-    //producers queues
-    producersQueues = malloc(sizeof(BoundedQueue*) * numOfProducers);
-    //dispatcher queues
-    dispatcherQueues = malloc(sizeof(UnboundedQueue*) * 3);
-    producers = malloc(sizeof(pthread_t) * numOfProducers);
-    char *line = NULL;
-    size_t len = 0;
-    int co_size = -1;
-    int readFile = 1;
-    int prod_num = 0;
-    while (readFile != -1) {
-        int numbers[3];
-        for (int i = 0; i < 3; i++) {
-            readFile = getline(&line, &len, config_f);
-            if (readFile == -1) {
-                co_size = numbers[0];
-                break;
-            }//if the line is empty
-            if (line[0] == '\n' || line[0] == '\r') {
-                i = -1;
-                continue;
-            }
-            line[strcspn(line, "\r\n ")] = '\0';
-//            printf("%s\n", line);
-            numbers[i] = atoi(line);
-        }
-        //creation of producer
-        if(co_size!=-1){
-            break;
-        }
-        producersQueues[prod_num] = create_bounded_queue(numbers[2]);
-        pthread_t id;
-        producer_parms *parms = malloc(sizeof(producer_parms));
-        parms->id = numbers[0];
-        parms->numberOfProducts = numbers[1];
-        //a thread for every producer
-        pthread_create(&id, NULL, &producer, parms);
-        producers[prod_num] = id;
-        prod_num++;
-    }
-    //creation of the co - editors shared queue
-    sharedQueue = create_bounded_queue(co_size);
-    coEditors = malloc(sizeof(pthread_t)*3);
-    //create a thread for each co- editor
-    for (int j = 0; j < 3; j++) {
-        coEditor_id *co_parms= malloc(sizeof(coEditor_id));
-        co_parms->id = j;
-        dispatcherQueues[j] = create_unbounded_queue();
-        //a thread for every co-editor
-        pthread_create(coEditors+j, NULL, &co_editor, co_parms);
-
-    }
-    //the creation of the dispatcher thread
-    pthread_create(&dispatcherThread, NULL, &dispacher, NULL);
-    //the creation of the screen manager thread
-    pthread_create(&screenManagerThread, NULL, &screenManager, NULL);
-    //closing the configuration file
-    fclose(config_f);
+    init_queue(&this->my_queue);
+    this->done = 1;
 }
 
+void push_un(char *new, struct UBQ *this) {
 
-void waitForAll() {
-    size_t num_co_editors = 3;
+    pthread_mutex_lock(&this->mutex);
+    enqueue(&this->my_queue, new);
+    pthread_mutex_unlock(&this->mutex);
+    sem_post(&this->full);
 
-    for (size_t i = 0; i < numOfProducers; i++) {
-        //wait for the completion of each thread
-        pthread_join(producers[i], NULL);
+}
+
+char *pop_un(struct UBQ *this) {
+    sem_wait(&this->full);
+    pthread_mutex_lock(&this->mutex);
+    char *data = dequeue(&this->my_queue);
+    pthread_mutex_unlock(&this->mutex);
+    return data;
+
+
+}
+
+//create the bounded queue
+struct BQ {
+    pthread_mutex_t mutex;
+    sem_t empty, full;
+    queue_t my_queue;
+    int size;
+    int done;
+
+    char *(*pop)(struct BQ *this);
+
+    void (*init)(struct BQ *this, int size);
+
+    void (*push)(char *new, struct BQ *this);
+
+
+};
+
+
+void init(struct BQ *this, int size) {
+    this->size = size;
+    sem_init(&this->empty, 0, this->size);
+    sem_init(&this->full, 0, 0);
+    int result = pthread_mutex_init(&(this->mutex), NULL);
+    if (result != 0) {
+        printf("Failed to initialize mutex\n");
+        exit(-1);
+    }
+    init_queue(&this->my_queue);
+    this->done = 1;
+}
+
+void push(char *new, struct BQ *this) {
+    sem_wait(&this->empty);
+    pthread_mutex_lock(&this->mutex);
+    enqueue(&this->my_queue, new);
+    pthread_mutex_unlock(&this->mutex);
+    sem_post(&this->full);
+
+}
+
+char *pop(struct BQ *this) {
+    sem_wait(&this->full);
+    pthread_mutex_lock(&this->mutex);
+    char *data = dequeue(&this->my_queue);
+    pthread_mutex_unlock(&this->mutex);
+    sem_post(&this->empty);
+    return data;
+
+
+}
+
+//define the global variables
+struct BQ *producersBQ;
+struct UBQ dispatcher_queues[3];
+struct BQ co_editor_array;
+
+//define the arguments for the producer
+struct ProducerArgs {
+    int num;
+    int queue_size;
+    int num_producers;
+};
+
+//
+void *producer(void *arg) {
+
+    // Seed the random number generator
+    srand(time(NULL));
+
+    // Define the data types
+    const char *dataTypes[] = {"SPORTS", "NEWS", "WEATHER"};
+    struct ProducerArgs *args = (struct ProducerArgs *) arg;
+    // Initialize the queue
+    int producer_num = args->num;
+    //producer_num=producer_num-1;
+    int queue_size = args->queue_size;
+    int num_producers = args->num_producers;
+    producersBQ[producer_num-1].init = &init;
+    producersBQ[producer_num-1].init(&producersBQ[producer_num - 1], queue_size);
+    int counter = 0;
+    int counter_sports = 0, counter_news = 0, counter_whether = 0;
+    while (counter < num_producers) {
+        char str[14];
+        sprintf(str, "%d", counter);
+        // Generate a random number to select a data type
+        int randNum = rand() % 3;
+        const char *dataType = dataTypes[randNum];
+        char data[1024];
+        strcpy(data, "Producer ");
+        char num_str[16];
+        sprintf(num_str, "%d", producer_num);
+        strcat(data, num_str);
+        strcat(data, " ");
+        strcat(data, dataType);
+        strcat(data, " ");
+        char num[16];
+        // Generate a random number to select a data type
+        switch (randNum) {
+            case 0:
+                sprintf(num, "%d", counter_sports);
+                counter_sports++;
+                break;
+            case 1:
+                sprintf(num, "%d", counter_news);
+                counter_news++;
+                break;
+            case 2:
+                sprintf(num, "%d", counter_whether);
+                counter_whether++;
+                break;
+
+
+        }
+        strcat(data, num);
+        strcat(data, "\n");
+        //write(1,data,strlen(data));
+        push(data, &producersBQ[producer_num - 1]);
+        counter++;
     }
 
-    pthread_join(dispatcherThread, NULL);
+    push("DONE", &producersBQ[producer_num - 1]);
+    pthread_exit(NULL);
 
-    for (size_t i = 0; i < num_co_editors; i++) {
-        //wait for the completion of each thread
-        pthread_join(coEditors[i], NULL);
+
+}
+
+void *dispatcher(void *arg) {
+    int num = *((int *) arg);
+    int done_producers = 0;
+    //initialize the dispatcher queues
+    dispatcher_queues[0].init_un = &init_un;
+    dispatcher_queues[0].init_un(&dispatcher_queues[0], 'S');
+    dispatcher_queues[1].init_un = &init_un;
+    dispatcher_queues[1].init_un(&dispatcher_queues[1], 'N');
+    dispatcher_queues[2].init_un = &init_un;
+    dispatcher_queues[2].init_un(&dispatcher_queues[2], 'W');
+    while (done_producers < num) {
+        for (int i = 0; i < num; i++) {
+            //if the producer is not done, continue. if all loop continue flag will be 0 and break.
+            if (producersBQ[i].done == 0) {
+                continue;
+            }
+            char *data = pop(&producersBQ[i]);
+
+            if (strcmp(data, "DONE") == 0) {
+                producersBQ[i].done = 0;
+                done_producers++;
+            } else {
+
+
+                //push the data to the dispatcher correct queue
+                if (strstr(data, "NEWS")) {
+                    push_un(data, &dispatcher_queues[1]);
+                }
+                if (strstr(data, "WEATHER")) {
+                    push_un(data, &dispatcher_queues[2]);
+
+                }
+                if (strstr(data, "SPORTS")) {
+                    push_un(data, &dispatcher_queues[0]);
+                }
+            }
+
+        }
     }
+    //after all the producers are done, push "DONE" to the dispatcher queues
+    for (int i = 0; i < 3; i++) {
+        push_un("DONE", &dispatcher_queues[i]);
+    }
+    pthread_exit(NULL);
 
-    pthread_join(screenManagerThread, NULL);
+}
+
+void *coEditor(void *arg) {
+    int num = *((int *) arg);
+    while (1) {
+        //pop drom the dispatcher queues and push to the co-editor array
+        char *data = pop_un(&dispatcher_queues[num]);
+        if (strcmp(data, "DONE") != 0) {
+            usleep(100000); // sleep for 0.1 seconds (100,000 microseconds)
+            push(data, &co_editor_array);
+        } else {
+            //if the dispatcher queue is done, push "DONE" to the co-editor array and exit
+            push(data, &co_editor_array);
+            break;
+        }
+    }
+    pthread_exit(NULL);
+
+}
+
+void *screenManager() {
+    int counter = 0;
+    //pop from the co-editor array and write to the screen
+    while (counter < 3) {
+        char *data = pop(&co_editor_array);
+        //if the co-editor array is not done, write.if the counter is 3 break.
+        if (strcmp(data, "DONE") != 0) {
+            write(1, data, strlen(data));
+        } else
+            counter++;
+
+    }
+    write(1, "DONE\n", strlen("DONE\n"));
+    pthread_exit(NULL);
+
+}
+
+//count number of producers in the given file
+int number_of_producers(char *file, int *option) {
+    int num_producers = 0;
+    char line[256];
+    //option is the format of the config.txt
+    *option = 1;
+    FILE *file1 = fopen(file, "r");
+    //count number os "PRODUCER" in the file
+    while (fgets(line, sizeof(line), file1)) {
+        if (strncmp(line, "PRODUCER", strlen("PRODUCER")) == 0) {
+            num_producers++;
+        }
+    }
+    if (num_producers == 0) {
+        *option = 2;
+        FILE *file2 = fopen(file, "r");
+        int num_lines = 0;
+        while (fgets(line, sizeof(line), file2)) {
+            if (strcmp(line, "\n") != 0) {
+                num_lines++;
+                if (num_lines == 3) {
+                    num_producers++;
+                    num_lines = 0;
+                }
+            }
+        }
+    }
+    return num_producers;
+
+
+}
+
+void extract_conf(struct ProducerArgs *args, char *file, int *co_editor_size, int option) {
+    char line[256];
+    int i = 0;
+    FILE *fd = fopen(file, "r");
+    //if the format is 1, extract the data from the config.txt file
+    if (option == 1) {
+        while (fgets(line, sizeof(line), fd) > 0) {
+            if (strncmp(line, "PRODUCER", strlen("PRODUCER")) == 0) {
+                sscanf(line, "PRODUCER %d", &args[i].num);
+                fgets(line, sizeof(line), fd);
+                sscanf(line, "%d", &args[i].num_producers);
+                fgets(line, sizeof(line), fd);
+                sscanf(line, "queue size = %d", &args[i].queue_size);
+                fgets(line, sizeof(line), fd);
+                i++;
+            } else if (strncmp(line, "Co-Editor queue size", strlen("Co-Editor queue size")) == 0) {
+                sscanf(line, "Co-Editor queue size = %d", co_editor_size);
+
+
+            }
+        }
+    } else {
+        //if the format is 2, extract the data from the config.txt file
+        while (fgets(line, sizeof(line), fd) > 0) {
+            sscanf(line, "%d", &args[i].num);
+            fgets(line, sizeof(line), fd);
+            sscanf(line, "%d", &args[i].num_producers);
+            fgets(line, sizeof(line), fd);
+            sscanf(line, "%d", &args[i].queue_size);
+            fgets(line, sizeof(line), fd);
+            i++;
+        }
+        fgets(line, sizeof(line), fd);
+        sscanf(line, "%d", co_editor_size);
+
+
+    }
 
 }
 
 
 int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        printf("not enough arguments");
+    pthread_t dispatch, coedit1, coedit2, coedit3, screen_manager;
+    // Check if file name is provided
+    if (argc != 2) {
         exit(-1);
     }
-    init(argv[1]);
-    waitForAll();
+    int co_editor = 0;
+    int *co_editor_size = &co_editor;
+    int option = 1;
+    int *ptr_option = &option;
+    int num_producers = number_of_producers(argv[1], ptr_option);
+    struct ProducerArgs args[num_producers];
+    extract_conf(args, argv[1], co_editor_size, *ptr_option);
+    //initialize the size of producer BQ
+    producersBQ = (struct BQ *) malloc(sizeof(struct BQ) * (num_producers + 1));
+    //producersBQ = (struct BQ *) malloc(sizeof(struct BQ) * num_producers);
+    co_editor_array.init = &init;
+    co_editor_array.init(&co_editor_array, *co_editor_size);
+    pthread_t threads[num_producers];
 
-    return 0;
+    //initialize the producer threads
+    for (int i = 0; i < num_producers; i++) {
+        pthread_create(&threads[i], NULL, producer, &args[i]);
+    }
+    pthread_create(&dispatch, NULL, dispatcher, &num_producers);
+    for (int i = 0; i < num_producers; i++) {
+        pthread_join(threads[i], NULL);
+    }
+    pthread_join(dispatch, NULL);
+    int index0 = 0, index1 = 1, index2 = 2;
+    pthread_create(&coedit1, NULL, coEditor, &index0);
+    pthread_create(&coedit2, NULL, coEditor, &index1);
+    pthread_create(&coedit3, NULL, coEditor, &index2);
+    pthread_create(&screen_manager, NULL, screenManager, NULL);
+    pthread_join(coedit1, NULL);
+    pthread_join(coedit2, NULL);
+    pthread_join(coedit3, NULL);
+    pthread_join(screen_manager, NULL);
+    //create dispatcher, co-editor and screnn manager threads
+    //free(producersBQ);
 }
